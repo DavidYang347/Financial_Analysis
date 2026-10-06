@@ -1,0 +1,50 @@
+[project]
+name = "financial-analysis"
+version = "0.2.0"
+description = "A-share quant research platform: data lake (Parquet + DuckDB), FastAPI backend, stock screening, Vue frontend."
+readme = "README.md"
+# numpy 2.2 (pinned below) supports Python 3.10-3.13.
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    # storage / query
+    "duckdb==1.5.6",
+    "pyarrow==25.0.1",
+    "pandas==2.3.3",
+    "numpy==2.2.6",
+    # backend
+    "fastapi==0.142.2",
+    "uvicorn==0.54.0",
+    "pydantic==2.13.5",
+    "python-dotenv==1.2.3",
+    "requests==2.34.2",
+    # data sources. The "mootdx" source speaks the TDX protocol through tdxpy
+    # (mootdx's own protocol library). mootdx itself is not installed: it pulls
+    # py_mini_racer, which often fails to build.
+    "tdxpy==0.2.7",
+    "pytdx==1.72",
+    "baostock==0.9.4",
+    "akshare==1.18.88",
+    "tushare==1.4.29",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "httpx==0.28.1",
+]
+
+[tool.uv]
+# An application, not a distributable package: run it from the repo root.
+package = false
+default-groups = ["dev"]
+
+# China mirror. Remove this block to use pypi.org.
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]

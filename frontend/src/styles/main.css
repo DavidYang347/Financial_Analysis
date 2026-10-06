@@ -1,0 +1,188 @@
+:root {
+  color-scheme: light;
+
+  --canvas: #eef1f5;
+  --surface: #ffffff;
+  --ink: #1b2430;
+  --ink-2: #3d4757;
+  --muted: #6b7685;
+  --rule: #d5dbe3;
+  --rule-soft: #e6eaf0;
+  --accent: #2b4c7e;
+  --accent-soft: #e4ebf5;
+  --up: #d9363e;
+  --down: #1e9e5a;
+
+  --font: "IBM Plex Sans Condensed", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+
+  /* type scale */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+
+  /* Element Plus theme */
+  --el-font-family: var(--font);
+  --el-color-primary: #2b4c7e;
+  --el-color-primary-light-3: #6b81a4;
+  --el-color-primary-light-5: #95a6bf;
+  --el-color-primary-light-7: #bfc9d8;
+  --el-color-primary-light-8: #d5dbe5;
+  --el-color-primary-light-9: #eaedf2;
+  --el-color-primary-dark-2: #223d65;
+  --el-color-danger: #d9363e;
+  --el-color-success: #1e9e5a;
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: var(--ink-2);
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--rule);
+  --el-border-color-light: var(--rule-soft);
+  --el-border-color-lighter: var(--rule-soft);
+  --el-border-radius-base: 4px;
+  --el-font-size-base: var(--fs-md);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* A work surface: white sheet on the slate canvas. Panels are separated by
+   rules, not shadows, so dense tables stay calm. */
+.sheet {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.sheet-head h2 {
+  font-size: var(--fs-lg);
+}
+
+.sheet-body {
+  padding: 16px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 24px 32px;
+  min-width: 0;
+}
+
+.empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.el-table {
+  --el-table-header-bg-color: #f5f7fa;
+  --el-table-header-text-color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 500;
+}
+
+pre.log {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 480px;
+  overflow: auto;
+  background: #f5f7fa;
+  border: 1px solid var(--rule-soft);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

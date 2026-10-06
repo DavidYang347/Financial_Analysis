@@ -1,2 +1,18 @@
 .idea
 .DS_Store
+
+# secrets
+.env
+
+# market data lake (~300 MB, rebuilt with `python -m data.maintenance init`)
+data/lake/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# node
+node_modules/
+frontend/dist/

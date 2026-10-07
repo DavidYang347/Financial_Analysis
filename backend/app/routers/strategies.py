@@ -9,8 +9,8 @@ from backend.app.deps import market_data
 from screening.params import ParamError
 from strategy.engine import BacktestError
 from strategy.registry import registry
-from strategy.runner import (BacktestStore, jobs, load_holdings, load_report, load_trades,
-                             trades_csv)
+from strategy.runner import (EXTRA_RE, BacktestStore, jobs, list_extras, load_extra, load_holdings,
+                             load_report, load_trades, trades_csv)
 
 router = APIRouter(prefix="/api/v1", tags=["strategies"])
 
@@ -115,3 +115,23 @@ def export_trades(run_id: str):
         raise HTTPException(404, f"no trades saved for {run_id}")
     return StreamingResponse(iter([data]), media_type="text/csv; charset=utf-8",
                              headers={"Content-Disposition": f'attachment; filename="{run_id}-trades.csv"'})
+
+
+@router.get("/backtests/{run_id}/extras")
+def get_extras(run_id: str):
+    """Extra tables the strategy exported (finalize hook), e.g. pools, odds cards, decision journal."""
+    _record(run_id)
+    return {"items": list_extras(_store(), run_id)}
+
+
+@router.get("/backtests/{run_id}/extras/{name}")
+def get_extra(run_id: str, name: str, symbol: str | None = Query(None, max_length=20),
+              search: str | None = Query(None, max_length=40), sort: str | None = Query(None, max_length=40),
+              desc: bool = True, offset: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=5000)):
+    _record(run_id)
+    if not EXTRA_RE.match(name):
+        raise HTTPException(404, f"no table {name!r}")
+    out = load_extra(_store(), run_id, name, symbol, search, sort, desc, offset, limit)
+    if out is None:
+        raise HTTPException(404, f"{run_id} has no table {name}")
+    return out

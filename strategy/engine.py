@@ -121,6 +121,7 @@ class EngineResult:
     holdings: pd.DataFrame
     logs: list[str] = field(default_factory=list)
     signals: int = 0
+    extras: dict = field(default_factory=dict)  # name -> DataFrame from the strategy's finalize()
 
 
 TRADE_COLUMNS = ["date", "symbol", "name", "side", "shares", "price", "amount", "commission", "tax",
@@ -130,9 +131,11 @@ TRADE_COLUMNS = ["date", "symbol", "name", "side", "shares", "price", "amount", 
 class Engine:
     def __init__(self, strategy_fn: Callable, params: dict, settings: BacktestSettings, md,
                  progress: Callable[[int, int], None] | None = None,
-                 cancelled: Callable[[], bool] | None = None) -> None:
+                 cancelled: Callable[[], bool] | None = None,
+                 finalize: Callable | None = None) -> None:
         settings.validate()
         self.fn = strategy_fn
+        self.finalize = finalize
         self.params = params
         self.s = settings
         self.md = md
@@ -379,8 +382,13 @@ class Engine:
             equity["benchmark"] = (1 + bench.to_numpy()).cumprod() * float(s.initial_cash)
         trades = pd.DataFrame(self.trades, columns=TRADE_COLUMNS)
         holdings = pd.DataFrame(hold_rows, columns=["date", "symbol", "shares", "price", "value", "weight", "pnl_pct"])
+        extras = {}
+        if self.finalize is not None:
+            ctx.trades = trades  # finalize() may pair fills with its own decision log
+            out = self.finalize(ctx, dict(self.params)) or {}
+            extras = {str(k): v for k, v in out.items() if isinstance(v, pd.DataFrame)}
         return EngineResult(settings=s.to_dict(), equity=equity, trades=trades, holdings=holdings,
-                            logs=ctx.logs, signals=signals)
+                            logs=ctx.logs, signals=signals, extras=extras)
 
 
 def _clean_targets(out, pf: Portfolio) -> dict[str, float] | None:

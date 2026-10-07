@@ -26,6 +26,8 @@ from strategy.engine import BacktestError, BacktestSettings, Cancelled, Engine
 from strategy.registry import Strategy
 
 RUN_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9_]+(?:-[0-9]+)?$")
+# Extra tables a strategy exports from finalize(): saved as x_<name>.parquet.
+EXTRA_RE = re.compile(r"^x_[a-z0-9_]{1,40}$")
 
 
 class BacktestStore:
@@ -84,7 +86,7 @@ class BacktestStore:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
     def frame(self, run_id: str, name: str) -> pd.DataFrame | None:
-        if name not in ("equity", "trades", "holdings"):
+        if name not in ("equity", "trades", "holdings") and not EXTRA_RE.match(name):
             raise ValueError(name)
         p = self.run_dir(run_id) / f"{name}.parquet"
         return pd.read_parquet(p) if p.exists() else None
@@ -169,11 +171,16 @@ def run_backtest(strategy: Strategy, md: MarketData, params: dict | None, settin
     }
     report, frames = None, None
     try:
-        res = Engine(strategy.module.rebalance, resolved, s, md, progress=progress, cancelled=cancelled).run()
+        res = Engine(strategy.module.rebalance, resolved, s, md, progress=progress, cancelled=cancelled,
+                     finalize=getattr(strategy.module, "finalize", None)).run()
         m = metrics.compute(res.equity, res.trades, s.initial_cash, s.risk_free)
         report = {"metrics": m, "monthly": metrics.monthly_returns(res.equity, s.initial_cash),
                   "logs": res.logs, "signals": res.signals}
         frames = {"equity": res.equity, "trades": res.trades, "holdings": res.holdings}
+        for k, v in res.extras.items():
+            if EXTRA_RE.match(f"x_{k}"):
+                frames[f"x_{k}"] = v
+        report["extras"] = sorted(f"x_{k}" for k in res.extras if EXTRA_RE.match(f"x_{k}"))
         record.update(status="ok", metrics={k: m.get(k) for k in (
             "total_return", "annual_return", "max_drawdown", "sharpe", "excess_return", "trades", "final_equity")})
     except Cancelled:
@@ -246,6 +253,37 @@ def load_holdings(store: BacktestStore, run_id: str, day: str | None = None) -> 
     return {"date": target, "days": days, "items": _json_records(sel),
             "cash": float(row["cash"].iloc[0]) if len(row) else None,
             "equity": float(row["equity"].iloc[0]) if len(row) else None}
+
+
+def list_extras(store: BacktestStore, run_id: str) -> list[dict]:
+    """Extra tables saved by the strategy's finalize(): name, rows, columns."""
+    d = store.run_dir(run_id)
+    out = []
+    for f in sorted(d.glob("x_*.parquet")):
+        import pyarrow.parquet as pq
+        meta = pq.ParquetFile(f).metadata
+        out.append({"name": f.stem, "rows": meta.num_rows, "columns": list(pq.read_schema(f).names)})
+    return out
+
+
+def load_extra(store: BacktestStore, run_id: str, name: str, symbol: str | None = None,
+               search: str | None = None, sort: str | None = None, desc: bool = True,
+               offset: int = 0, limit: int = 200) -> dict | None:
+    df = store.frame(run_id, name)
+    if df is None:
+        return None
+    if symbol and "symbol" in df:
+        df = df[df["symbol"].astype(str).str.contains(symbol.strip().upper(), regex=False)]
+    if search:
+        k = search.strip()
+        mask = pd.Series(False, index=df.index)
+        for c in df.columns:
+            if df[c].dtype == object:
+                mask |= df[c].astype(str).str.contains(k, regex=False, na=False)
+        df = df[mask]
+    if sort and sort in df.columns:
+        df = df.sort_values(sort, ascending=not desc, na_position="last")
+    return {"total": int(len(df)), "columns": list(df.columns), "items": _json_records(df.iloc[offset: offset + limit])}
 
 
 def trades_csv(store: BacktestStore, run_id: str) -> bytes | None:

@@ -360,4 +360,22 @@ export const strategyApi = {
     get<{ date: string | null; days: string[]; items: Holding[]; cash: number | null; equity: number | null }>(
       `/api/v1/backtests/${encodeURIComponent(runId)}/holdings`, { date }),
   tradesCsvUrl: (runId: string) => `/api/v1/backtests/${encodeURIComponent(runId)}/trades.csv`,
+  extras: (runId: string) =>
+    get<{ items: ExtraTableInfo[] }>(`/api/v1/backtests/${encodeURIComponent(runId)}/extras`),
+  extra: (runId: string, name: string,
+          q: { symbol?: string; search?: string; sort?: string; desc?: boolean; offset?: number; limit?: number } = {}) =>
+    get<ExtraTable>(`/api/v1/backtests/${encodeURIComponent(runId)}/extras/${encodeURIComponent(name)}`, q),
+}
+
+/** A table a strategy exported from its finalize() hook (x_<name>.parquet). */
+export interface ExtraTableInfo {
+  name: string
+  rows: number
+  columns: string[]
+}
+
+export interface ExtraTable {
+  total: number
+  columns: string[]
+  items: Record<string, unknown>[]
 }

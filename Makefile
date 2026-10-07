@@ -1,6 +1,6 @@
 NPM_REGISTRY ?= https://registry.npmmirror.com
 
-.PHONY: help install dev start build test typecheck update names status check lock clean
+.PHONY: help install dev start build test typecheck update names status check lock clean fundlab
 
 help:
 	@echo "make install    uv sync 安装 Python 依赖（创建 .venv），npm ci 安装前端依赖"
@@ -13,6 +13,7 @@ help:
 	@echo "make status     查看数据概况"
 	@echo "make check      数据质量检查"
 	@echo "make lock       依赖改动后重新生成 uv.lock"
+	@echo "make fundlab    下载 / 增量更新基本面和公告，并重建时点表（可断点续传）"
 
 install:
 	uv sync
@@ -48,6 +49,10 @@ check:
 
 lock:
 	uv lock
+
+fundlab:
+	uv run python -m fundlab fetch
+	uv run python -m fundlab build
 
 clean:
 	rm -rf frontend/dist .pytest_cache

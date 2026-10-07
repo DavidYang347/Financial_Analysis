@@ -93,6 +93,31 @@ tests/
 
 回测规则：信号用当天收盘数据，默认次日开盘成交；T+1、整手、涨停买不进 / 跌停卖不出、停牌不成交；佣金（最低 5 元）、卖出印花税、滑点；除权除息按复权因子调整持股；退市股票按最后收盘价清算。股票池包含当时还没退市的股票，没有幸存者偏差。
 
+## 高赔率低频基本面策略（v3）
+
+`materials/高赔率低频基本面交易策略_v3执行版.md` 的可回测实现，分三层：
+
+```
+fundlab/     基本面与公告数据：fetch.py 下载（东财 / 新浪 / baostock，可断点续传），events.py 公告标题 → 事件类型，
+             build.py 生成时点表 data/lake/fundlab/（fin 财报 + TTM、forecast 业绩预告、events 公告事件、holder 增减持、
+             repurchase 回购、unlock 解禁、pledge 质押、valuation 月末 PB/PE 历史）
+oddsbook/    策略本体：config.py 全部参数（默认值 = 附录 G）、features.py 时点截面、veto.py 一票否决、channels.py 六条通道、
+             odds.py 赔率卡 8 步法、score.py 评分卡 + 入场检查清单、book.py 四级池子 / 仓位 / 退出 / 熔断、journal.py 观察表
+strategy/strategies/high_odds_v3.py   接入回测引擎
+```
+
+```bash
+make fundlab        # = python -m fundlab fetch && python -m fundlab build；首次约 1~2 小时，东财接口限流，可中断后重跑
+```
+
+然后在“策略回测”里选“高赔率低频基本面 v3”（默认从 2025-01-02 开始）。回测结束后，“高赔率观察”页显示池子规模、按通道 / 母题的胜率与期望、决策日志（每个动作及原因）、赔率卡、月度审计、逐笔往返和期末弹药池。
+
+时点规则：只用 `ann_date <= 当天` 的财报和公告（收盘后复盘、次日开盘成交）；财报发布日优先取预约披露表的实际披露日。所有价格（目标价、证伪价、买入线）按后复权保存，跨除权除息可比。
+
+引擎新增了可选的 `finalize(ctx, params)` 钩子：策略返回 `{名字: DataFrame}`，保存为回测目录下的 `x_<名字>.parquet`，接口 `/api/v1/backtests/{run_id}/extras`。
+
+已知简化：没有一致预期和备考利润（事件成功价 = 事件前价格 × 倍数）；有息负债用总负债扣应付和预收近似；质押是公司层面比例；财报是最新口径；公告只按标题分类。
+
 ## 添加页面模块
 
 在 `frontend/src/modules/<名字>/module.ts` 默认导出一个模块定义（标题、图标、排序、路由），左侧导航会自动出现。参考 `modules/screening/module.ts`。

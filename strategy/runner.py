@@ -84,10 +84,15 @@ class BacktestStore:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
     def frame(self, run_id: str, name: str) -> pd.DataFrame | None:
-        if name not in ("equity", "trades", "holdings"):
+        """equity / trades / holdings, or any extra table the strategy exported from finalize()."""
+        if not re.match(r"^[a-z][a-z0-9_]{0,40}$", name or ""):
             raise ValueError(name)
         p = self.run_dir(run_id) / f"{name}.parquet"
         return pd.read_parquet(p) if p.exists() else None
+
+    def extra_frames(self, run_id: str) -> list[str]:
+        d = self.run_dir(run_id)
+        return sorted(p.stem for p in d.glob("*.parquet") if p.stem not in ("equity", "trades", "holdings"))
 
 
 def build_settings(strategy: Strategy, given: dict, md: MarketData) -> BacktestSettings:
@@ -169,11 +174,12 @@ def run_backtest(strategy: Strategy, md: MarketData, params: dict | None, settin
     }
     report, frames = None, None
     try:
-        res = Engine(strategy.module.rebalance, resolved, s, md, progress=progress, cancelled=cancelled).run()
+        res = Engine(strategy.module.rebalance, resolved, s, md, progress=progress, cancelled=cancelled,
+                     finalize_fn=getattr(strategy.module, "finalize", None)).run()
         m = metrics.compute(res.equity, res.trades, s.initial_cash, s.risk_free)
         report = {"metrics": m, "monthly": metrics.monthly_returns(res.equity, s.initial_cash),
                   "logs": res.logs, "signals": res.signals}
-        frames = {"equity": res.equity, "trades": res.trades, "holdings": res.holdings}
+        frames = {"equity": res.equity, "trades": res.trades, "holdings": res.holdings, **res.extra}
         record.update(status="ok", metrics={k: m.get(k) for k in (
             "total_return", "annual_return", "max_drawdown", "sharpe", "excess_return", "trades", "final_equity")})
     except Cancelled:

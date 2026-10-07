@@ -121,6 +121,7 @@ class EngineResult:
     holdings: pd.DataFrame
     logs: list[str] = field(default_factory=list)
     signals: int = 0
+    extra: dict = field(default_factory=dict)  # extra tables a strategy exports via finalize(ctx)
 
 
 TRADE_COLUMNS = ["date", "symbol", "name", "side", "shares", "price", "amount", "commission", "tax",
@@ -130,9 +131,11 @@ TRADE_COLUMNS = ["date", "symbol", "name", "side", "shares", "price", "amount", 
 class Engine:
     def __init__(self, strategy_fn: Callable, params: dict, settings: BacktestSettings, md,
                  progress: Callable[[int, int], None] | None = None,
-                 cancelled: Callable[[], bool] | None = None) -> None:
+                 cancelled: Callable[[], bool] | None = None,
+                 finalize_fn: Callable | None = None) -> None:
         settings.validate()
         self.fn = strategy_fn
+        self.finalize_fn = finalize_fn  # optional finalize(ctx) -> {name: DataFrame}, called after the last day
         self.params = params
         self.s = settings
         self.md = md
@@ -379,8 +382,12 @@ class Engine:
             equity["benchmark"] = (1 + bench.to_numpy()).cumprod() * float(s.initial_cash)
         trades = pd.DataFrame(self.trades, columns=TRADE_COLUMNS)
         holdings = pd.DataFrame(hold_rows, columns=["date", "symbol", "shares", "price", "value", "weight", "pnl_pct"])
+        extra = {}
+        ctx.trades_df, ctx.equity_df = trades, equity  # for finalize(): per-trade attribution needs the fills
+        if self.finalize_fn is not None:
+            extra = {str(k): v for k, v in (self.finalize_fn(ctx) or {}).items() if isinstance(v, pd.DataFrame)}
         return EngineResult(settings=s.to_dict(), equity=equity, trades=trades, holdings=holdings,
-                            logs=ctx.logs, signals=signals)
+                            logs=ctx.logs, signals=signals, extra=extra)
 
 
 def _clean_targets(out, pf: Portfolio) -> dict[str, float] | None:

@@ -1,6 +1,6 @@
 NPM_REGISTRY ?= https://registry.npmmirror.com
 
-.PHONY: help install dev start build test typecheck update names status check lock clean
+.PHONY: help install dev start build test typecheck update names fundamentals observe status check lock clean
 
 help:
 	@echo "make install    uv sync 安装 Python 依赖（创建 .venv），npm ci 安装前端依赖"
@@ -10,6 +10,8 @@ help:
 	@echo "make test       后端测试 + 前端类型检查"
 	@echo "make update     增量更新行情数据"
 	@echo "make names      下载 / 更新历史简称和 ST 记录（可断点续传）"
+	@echo "make fundamentals  下载并构建基本面 / 公告数据（高赔率策略用，可断点续传）"
+	@echo "make observe    生成最近一次高赔率策略回测的观察报告"
 	@echo "make status     查看数据概况"
 	@echo "make check      数据质量检查"
 	@echo "make lock       依赖改动后重新生成 uv.lock"
@@ -39,6 +41,14 @@ update:
 
 names:
 	uv run python -m data.maintenance names
+
+# 高赔率策略的基本面 / 公告数据:下载是分片、可断点续传的;没下完会返回退出码 2,再运行一次即可
+fundamentals:
+	uv run python -m fundamentals fetch all --budget 600 --workers 2 || [ $$? -eq 2 ]
+	uv run python -m fundamentals build
+
+observe:
+	uv run python -m highodds.report
 
 status:
 	uv run python -m data.maintenance status

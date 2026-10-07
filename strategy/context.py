@@ -40,6 +40,26 @@ class StrategyContext:
         """The signal day: data up to this day's close is visible."""
         return self._hist.all_days[self._i]
 
+    def is_period_end(self, unit: str) -> bool:
+        """Whether today is the last trading day of its ISO week ("week") or month ("month").
+
+        The last day of the data counts as a period end. Looking at tomorrow's date is not look-ahead:
+        the trading calendar is public in advance.
+        """
+        days = self._hist.all_days
+        if self._i + 1 >= len(days):
+            return True
+        a, b = days[self._i], days[self._i + 1]
+        if unit == "week":
+            return a.isocalendar()[:2] != b.isocalendar()[:2]
+        if unit == "month":
+            return (a.year, a.month) != (b.year, b.month)
+        raise ValueError("unit 只能是 week / month")
+
+    def day_number(self) -> int:
+        """Index of today in the trading calendar (increases by one per trading day)."""
+        return self._i
+
     def trading_days(self, n: int) -> list[date]:
         """The last ``n`` trading days up to and including today."""
         return self._hist.all_days[max(0, self._i - n + 1): self._i + 1]
@@ -95,6 +115,14 @@ class StrategyContext:
         """Wide table: index = date, columns = symbol, values = ``field`` (e.g. close)."""
         df = self.bars(lookback, symbols, adjust)
         return df.pivot(index="date", columns="symbol", values=field)
+
+    def today_bars(self) -> pd.DataFrame:
+        """Today's raw bar per symbol: open, high, low, close, prev_close, adj_factor, bar_no (index = symbol)."""
+        if "today_bars" not in self._cache:
+            d = self._hist.day(self._i).copy()
+            d.index = d.index.astype(str)
+            self._cache["today_bars"] = d
+        return self._cache["today_bars"]
 
     def universe(self, params: dict | None = None) -> pd.DataFrame:
         """Stocks with a bar today (not suspended), after the COMMON_FILTERS present in ``params``.

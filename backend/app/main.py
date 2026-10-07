@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.app import settings
-from backend.app.routers import data_admin, market, screening
+from backend.app.routers import data_admin, market, screening, strategies
 
 app = FastAPI(title="Financial_Analysis Quant API", version="0.2.0")
 
@@ -34,6 +34,7 @@ async def local_only_writes(request: Request, call_next):
 app.include_router(market.router)
 app.include_router(data_admin.router)
 app.include_router(screening.router)
+app.include_router(strategies.router)
 
 
 @app.get("/health")

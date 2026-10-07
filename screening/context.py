@@ -39,6 +39,10 @@ class ScreenContext:
         return self._cache[key]
 
     # ---- data access ---------------------------------------------------------
+    def st_symbols(self) -> set[str]:
+        """Symbols under risk warning (ST / *ST) on ``as_of``."""
+        return self.md.st_history().on(self.as_of)
+
     def stocks(self) -> pd.DataFrame:
         if "stocks" not in self._cache:
             self._cache["stocks"] = self.md.stocks()
@@ -77,7 +81,7 @@ class ScreenContext:
         today = self.md.sql("SELECT symbol FROM daily WHERE date = ?", [self.as_of])
         st = st[st["symbol"].isin(today["symbol"])]  # drop suspended stocks
         if p.get("exclude_st", False):
-            st = st[~st["name"].fillna("").str.upper().str.contains("ST")]
+            st = st[~st["symbol"].isin(self.md.st_history().on(self.as_of))]
         if p.get("exclude_bj", False):
             st = st[st["exchange"] != "BJ"]
         if p.get("boards"):
@@ -119,13 +123,14 @@ def last_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("symbol", sort=False).tail(1).reset_index(drop=True)
 
 
-def limit_pct(symbol: str, name: str = "") -> float:
-    """Daily price limit for a symbol (ST 5%, ChiNext/STAR 20%, BSE 30%, main board 10%)."""
-    code, ex = symbol.split(".")
-    if ex == "BJ":
-        return 0.30
-    if code.startswith(("300", "301", "302", "688", "689")):
-        return 0.20
-    if "ST" in (name or "").upper():
-        return 0.05
-    return 0.10
+def limit_pct(symbol: str, name: str = "", day: date | None = None, is_st: bool | None = None) -> float:
+    """Daily price limit on ``day`` (default today).
+
+    Main board 10% (ST 5% before 2026-07-06), ChiNext 20% (10% before 2020-08-24),
+    STAR 20%, BSE 30%. ``is_st`` overrides the name-based guess; pass
+    ``ctx.md.st_history().is_st(symbol, day)`` for historical accuracy.
+    """
+    from strategy.rules import limit_pct as _rule
+    st = is_st if is_st is not None else "ST" in (name or "").upper()
+    pct = _rule(symbol, day or date.today(), st)
+    return 0.10 if pct == float("inf") else pct

@@ -31,6 +31,13 @@ def status(lake: Lake | None = None) -> dict:
         size = sum(p.stat().st_size for p in lake.root.rglob("*.parquet"))
         out["disk_mb"] = round(size / 1e6, 1)
     out["adj_factor_symbols"] = int(md.sql("SELECT count(DISTINCT symbol) FROM adj_factor").iloc[0, 0])
+    cov = md.sql("SELECT method, count(*) AS n FROM name_coverage GROUP BY 1 ORDER BY 2 DESC")
+    out["name_history"] = {
+        "methods": {r.method: int(r.n) for r in cov.itertuples()},
+        "st_segments": int(md.sql("SELECT count(*) FROM names WHERE is_st").iloc[0, 0]),
+        "st_today": int(md.sql("""SELECT count(*) FROM names n JOIN stocks s USING (symbol)
+                                   WHERE n.is_st AND n."end" IS NULL AND s.status = 'listed'""").iloc[0, 0]),
+    }
     out["last_runs"] = [{k: r.get(k) for k in ("mode", "finished_at", "target_date", "symbols_updated",
                                                   "symbols_failed", "rows_written", "source_usage")}
                         for r in lake.read_log(5)]

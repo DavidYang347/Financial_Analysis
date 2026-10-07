@@ -504,6 +504,18 @@ def incremental_update(lake: Lake | None = None, symbols: list[str] | None = Non
             lake.write_state(merged)
         log.info("done: %d symbols updated, %d rows written, %d failed",
                  report.symbols_updated, report.rows_written, report.symbols_failed)
+
+        # ---- names / ST ---------------------------------------------------------
+        # Once the history has been downloaded (python -m data.maintenance names),
+        # keep it current: new renames (戴帽 / 摘帽) show up in eastmoney's chain
+        # and only those symbols are re-queried. Failures never fail the update.
+        if symbols is None and (lake.meta_dir / "name_coverage.parquet").exists():
+            try:
+                from data.names import refresh_names
+                rep = refresh_names(lake, progress=progress, time_budget=600)
+                log.info("names refreshed: %d re-queried, %d failed", rep["fetched"], rep["failed"])
+            except Exception as e:
+                log.warning("names refresh skipped: %s", e)
     except Exception as e:
         report.error = f"{type(e).__name__}: {e}"
         raise

@@ -42,6 +42,7 @@ def screen(ctx, params) -> pd.DataFrame:
 - `ctx.universe(params)`：股票池
 - `ctx.bars(lookback, symbols, adjust="qfq")`：日线，列为 symbol, date, open, high, low, close, volume, amount, turnover
 - `ctx.trading_days(n)`、`ctx.stocks()`
+- `ctx.st_symbols()`：筛选日的 ST 股票；`ctx.md.st_history().is_st(symbol, day)` 查任意一天
 - `ctx.md`：底层 `MarketData`，可以直接 `ctx.md.sql("...")`
 
 脚本在后端进程里执行，拥有和后端一样的权限，只放你自己写的或审阅过的代码。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, type ScreenRecord, type ScreenResult, type ScreenerDetail, type ScreenerSummary } from '@/api'
@@ -35,7 +35,8 @@ const shown = computed(() => {
 })
 
 function defaults(d: ScreenerDetail): Record<string, unknown> {
-  return Object.fromEntries(d.params.map((p) => [p.key, structuredClone(p.default)]))
+  // d comes from a reactive ref, so nested arrays/objects are Proxies; structuredClone can't handle Proxies, so unwrap first
+  return Object.fromEntries(toRaw(d).params.map((p) => [p.key, structuredClone(toRaw(p.default))]))
 }
 
 async function loadList() {

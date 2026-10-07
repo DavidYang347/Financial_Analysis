@@ -50,6 +50,23 @@ def get_stock(symbol: str, md: MarketData = Depends(market_data)):
     return _records(df)[0]
 
 
+@router.get("/stocks/{symbol}/names")
+def name_history(symbol: str, md: MarketData = Depends(market_data)):
+    """Historical names and ST periods of one stock."""
+    s = _norm(symbol)
+    cov = md.sql("SELECT method, former_names, updated_at, error FROM name_coverage WHERE symbol = ?", [s])
+    return {"symbol": s, "coverage": _records(cov)[0] if len(cov) else None,
+            "items": _records(md.name_history(s))}
+
+
+@router.get("/st")
+def st_stocks(day: date | None = Query(None, alias="date"), md: MarketData = Depends(market_data)):
+    """Stocks under risk warning (ST / *ST) on a day (default: latest trading day)."""
+    d = day or md.latest_date() or date.today()
+    df = md.st_stocks(d)
+    return {"date": d.isoformat(), "count": len(df), "items": _records(df)}
+
+
 @router.get("/daily/{symbol}")
 def daily_bars(symbol: str, start: date | None = None, end: date | None = None,
                adjust: Literal["none", "qfq", "hfq"] = "none",

@@ -23,7 +23,7 @@ def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
 
 
 class UpdateRequest(BaseModel):
-    kind: Literal["update", "repair"] = "update"
+    kind: Literal["update", "repair", "names"] = "update"
     symbols: list[str] | None = Field(default=None, max_length=500)
     refresh_meta: bool = True
 

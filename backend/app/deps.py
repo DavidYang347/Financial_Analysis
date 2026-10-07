@@ -23,6 +23,9 @@ PHASE_LABELS = {
     "factors": "重算复权因子",
     "factors(resumed)": "计算复权因子",
     "consolidate": "合并分区",
+    "names: eastmoney": "下载曾用名（东方财富）",
+    "names: szse": "下载深交所简称变更",
+    "names: per-symbol": "逐只查询沪市 / 北交所 ST 历史",
 }
 
 
@@ -50,7 +53,7 @@ class MaintenanceJob:
                 raise RuntimeError("an update is already running")
             if is_locked(md.lake):
                 raise RuntimeError("another data update is running (probably from the command line)")
-            run_id = new_run_id("incremental" if kind == "update" else kind)
+            run_id = new_run_id({"update": "incremental"}.get(kind, kind))
             self.state = {
                 "status": "running", "run_id": run_id, "kind": kind, "symbols": symbols,
                 "started_at": datetime.now().isoformat(timespec="seconds"),
@@ -72,7 +75,9 @@ class MaintenanceJob:
         result: dict
         try:
             with lake_lock(md.lake), capture_log(md.lake, run_id):
-                if kind == "repair":
+                if kind == "names":
+                    rep = _names_run(md.lake, run_id, symbols, self._progress)
+                elif kind == "repair":
                     rep = repair(md.lake, symbols=symbols, run_id=run_id, progress=self._progress)
                 else:
                     rep = incremental_update(md.lake, symbols=symbols, refresh_meta=refresh_meta,
@@ -87,6 +92,28 @@ class MaintenanceJob:
         with self._lock:
             self.state = {**self.state, **result, "elapsed_sec": round(time.time() - t0, 1),
                           "finished_at": datetime.now().isoformat(timespec="seconds")}
+
+
+class _NamesReport:
+    def __init__(self, d: dict) -> None:
+        self.d = d
+
+    def as_dict(self) -> dict:
+        return self.d
+
+
+def _names_run(lake, run_id: str, symbols, progress) -> _NamesReport:
+    from data.names import refresh_names
+    from data.store import now_iso
+
+    started = now_iso()
+    rep = refresh_names(lake, symbols=symbols, progress=progress)
+    rec = {"run_id": run_id, "mode": "names", "started_at": started, "finished_at": now_iso(),
+           "symbols_total": rep["targets"], "symbols_updated": rep["fetched"], "symbols_failed": rep["failed"],
+           "rows_written": rep["segments"], "complete": rep["complete"], "elapsed_sec": rep["elapsed_sec"],
+           "names": rep}
+    lake.append_log(rec)
+    return _NamesReport(rec)
 
 
 @lru_cache(maxsize=1)

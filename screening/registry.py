@@ -46,6 +46,7 @@ class Screener:
     version: str = ""
     columns: dict[str, str] = field(default_factory=dict)
     params: list[Param] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)  # the raw META dict, for keys a subclass understands
     module: ModuleType | None = None
     error: str | None = None
 
@@ -77,18 +78,30 @@ def _first_line(md: str) -> str:
 
 
 class Registry:
-    """Re-scans the directory on every access and re-imports files whose mtime changed."""
+    """Re-scans the directory on every access and re-imports files whose mtime changed.
+
+    ``entry`` is the function every script must define; the strategy module
+    reuses this class with ``entry="rebalance"``.
+    """
+
+    entry = "screen"
+    entry_signature = "screen(ctx, params)"
+    namespace = "_screeners"
+    item_cls: type[Screener] = Screener
 
     def __init__(self, directory: Path = SCREENERS_DIR) -> None:
         self.directory = directory
         self._cache: dict[str, Screener] = {}
         self._lock = threading.Lock()
 
+    def validate(self, s: Screener, mod: ModuleType) -> None:
+        """Extra checks for subclasses; raise to mark the script as broken."""
+
     def _load(self, sid: str, path: Path, mtime: float) -> Screener:
-        s = Screener(id=sid, path=path, mtime=mtime)
+        s = self.item_cls(id=sid, path=path, mtime=mtime)
         # Unique module name per file version so edits are picked up.
         digest = hashlib.sha1(f"{path}:{mtime}".encode()).hexdigest()[:10]
-        mod_name = f"_screeners.{sid}_{digest}"
+        mod_name = f"{self.namespace}.{sid}_{digest}"
         try:
             spec = importlib.util.spec_from_file_location(mod_name, path)
             if spec is None or spec.loader is None:
@@ -99,8 +112,8 @@ class Registry:
             meta = getattr(mod, "META", None)
             if not isinstance(meta, dict) or not meta.get("name"):
                 raise ValueError("META 缺失或没有 name")
-            if not callable(getattr(mod, "screen", None)):
-                raise ValueError("没有定义 screen(ctx, params) 函数")
+            if not callable(getattr(mod, self.entry, None)):
+                raise ValueError(f"没有定义 {self.entry_signature} 函数")
             params = list(getattr(mod, "PARAMS", []) or [])
             if not all(isinstance(p, Param) for p in params):
                 raise ValueError("PARAMS 里只能放 Param 对象")
@@ -115,12 +128,14 @@ class Registry:
             s.version = str(meta.get("version", ""))
             s.columns = {str(k): str(v) for k, v in (meta.get("columns") or {}).items()}
             s.params = params
+            s.meta = dict(meta)
+            self.validate(s, mod)
         except Exception as e:
             s.error = f"{type(e).__name__}: {e}"
             s.description = "```\n" + traceback.format_exc(limit=4) + "\n```"
         return s
 
-    def scan(self) -> list[Screener]:
+    def scan(self) -> list:
         with self._lock:
             found: dict[str, Screener] = {}
             if self.directory.exists():

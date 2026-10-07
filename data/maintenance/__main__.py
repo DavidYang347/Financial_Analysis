@@ -7,6 +7,7 @@
     python -m data.maintenance status               # what is in the lake
     python -m data.maintenance check                # data-quality checks
     python -m data.maintenance sources              # probe every data source
+    python -m data.maintenance names                # download historical names / ST status (resumable)
 """
 from __future__ import annotations
 
@@ -69,6 +70,28 @@ def cmd_repair(a) -> int:
     return 0 if rep.symbols_failed == 0 else 2
 
 
+def cmd_names(a) -> int:
+    from data.maintenance.runs import LakeBusy, capture_log, lake_lock, new_run_id
+    from data.names import refresh_names
+    from data.store import Lake, now_iso
+
+    lake = Lake()
+    run_id = new_run_id("names")
+    try:
+        with lake_lock(lake), capture_log(lake, run_id):
+            started = now_iso()
+            rep = refresh_names(lake, symbols=_symbols(a.symbols), force=a.force, time_budget=a.time_budget)
+            lake.append_log({"run_id": run_id, "mode": "names", "started_at": started, "finished_at": now_iso(),
+                             "symbols_total": rep["targets"], "symbols_updated": rep["fetched"],
+                             "symbols_failed": rep["failed"], "rows_written": rep["segments"],
+                             "complete": rep["complete"], "elapsed_sec": rep["elapsed_sec"], "names": rep})
+    except LakeBusy:
+        print("another data update is running; try again later", file=sys.stderr)
+        sys.exit(4)
+    print(json.dumps(rep, ensure_ascii=False, indent=2, default=str))
+    return 0 if rep["complete"] else 3
+
+
 def cmd_status(a) -> int:
     from data.maintenance.checks import status
     print(json.dumps(status(), ensure_ascii=False, indent=2, default=str))
@@ -114,6 +137,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--workers", type=int, default=config.WORKERS)
     s.set_defaults(fn=cmd_repair)
 
+    s = sub.add_parser("names", help="historical stock names and ST status")
+    s.add_argument("--symbols", help="comma-separated subset")
+    s.add_argument("--force", action="store_true", help="re-query every symbol, not only changed ones")
+    s.add_argument("--time-budget", type=float, help="seconds; stop early, save progress, exit 3")
+    s.set_defaults(fn=cmd_names)
+
     sub.add_parser("status", help="lake summary").set_defaults(fn=cmd_status)
     sub.add_parser("check", help="data-quality checks").set_defaults(fn=cmd_check)
     sub.add_parser("sources", help="probe data sources").set_defaults(fn=cmd_sources)
@@ -121,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    for noisy in ("urllib3", "tdxpy", "pytdx", "mootdx"):
+    for noisy in ("urllib3", "tdxpy", "pytdx", "mootdx", "openpyxl"):
         logging.getLogger(noisy).setLevel(logging.ERROR)
     return a.fn(a)
 

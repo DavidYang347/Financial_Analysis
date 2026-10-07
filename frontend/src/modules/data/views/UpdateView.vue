@@ -5,10 +5,10 @@ import { api, type MaintenanceJob, type QualityReport, type SourceProbe } from '
 import { errorText } from '@/api/http'
 import RunLog from '@/components/RunLog.vue'
 import { dataStatus, refreshDataStatus } from '@/stores/dataStatus'
-import { RUN_MODE_LABEL, SOURCE_LABEL, fmtDuration, fmtInt, fmtTime } from '@/utils/format'
+import { NAME_METHOD_LABEL, RUN_MODE_LABEL, SOURCE_LABEL, fmtDuration, fmtInt, fmtTime } from '@/utils/format'
 
 const job = ref<MaintenanceJob>({ status: 'idle' })
-const kind = ref<'update' | 'repair'>('update')
+const kind = ref<'update' | 'repair' | 'names'>('update')
 const scope = ref<'all' | 'some'>('all')
 const symbolsText = ref('')
 const refreshMeta = ref(true)
@@ -47,8 +47,9 @@ async function pollJob() {
 }
 
 async function start() {
-  const symbols = scope.value === 'some' || kind.value === 'repair' ? parseSymbols() : null
-  if ((kind.value === 'repair' || scope.value === 'some') && !symbols?.length) {
+  const some = kind.value === 'repair' || (kind.value === 'update' && scope.value === 'some')
+  const symbols = some ? parseSymbols() : null
+  if (some && !symbols?.length) {
     ElMessage.warning('填写至少一只股票代码')
     return
   }
@@ -106,10 +107,16 @@ onBeforeUnmount(() => window.clearTimeout(timer))
               <el-radio-group v-model="kind">
                 <el-radio value="update">增量更新</el-radio>
                 <el-radio value="repair">修复指定股票</el-radio>
+                <el-radio value="names">简称 / ST 历史</el-radio>
               </el-radio-group>
               <p class="hint">
                 <template v-if="kind === 'update'">补齐每只股票上次之后的日线，并为新出现除权除息的股票重算复权因子。</template>
-                <template v-else>删掉这些股票已存的全部日线，从上市日重新下载。</template>
+                <template v-else-if="kind === 'repair'">删掉这些股票已存的全部日线，从上市日重新下载。</template>
+                <template v-else>
+                  下载每只股票历史上的简称和 ST / *ST 区间，供回测和筛选按当时的 ST 状态判断涨跌停和股票池。
+                  深市来自深交所，沪市逐只查询 BaoStock（首次约 10~20 分钟，之后只查有改名的股票）。
+                  下载过一次后，增量更新会自动顺带更新。
+                </template>
               </p>
             </el-form-item>
 
@@ -135,7 +142,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
             </el-form-item>
 
             <el-button type="primary" native-type="submit" :loading="starting || running">
-              {{ running ? '正在更新' : kind === 'update' ? '开始更新' : '开始修复' }}
+              {{ running ? '正在更新' : kind === 'update' ? '开始更新' : kind === 'repair' ? '开始修复' : '下载 ST 历史' }}
             </el-button>
           </el-form>
 
@@ -153,7 +160,15 @@ onBeforeUnmount(() => window.clearTimeout(timer))
               :format="() => (job.total ? `${fmtInt(job.done)} / ${fmtInt(job.total)}` : '')"
             />
             <el-alert v-if="job.status === 'failed'" :title="job.error" type="error" :closable="false" show-icon />
-            <dl v-if="job.status === 'finished' && job.report" class="facts">
+            <dl v-if="job.status === 'finished' && job.report && job.kind === 'names'" class="facts">
+              <div><dt>股票</dt><dd>{{ fmtInt(job.report.symbols_total) }}</dd></div>
+              <div><dt>逐只查询</dt><dd>{{ fmtInt(job.report.symbols_updated) }}</dd></div>
+              <div><dt>名称 / ST 区间</dt><dd>{{ fmtInt(job.report.rows_written) }}</dd></div>
+              <div><dt>失败</dt><dd :class="{ up: job.report.symbols_failed }">{{ fmtInt(job.report.symbols_failed) }}</dd></div>
+              <div v-if="job.report.complete === false"><dt>未完成</dt><dd>再运行一次继续</dd></div>
+              <div><dt>耗时</dt><dd>{{ fmtDuration(job.elapsed_sec) }}</dd></div>
+            </dl>
+            <dl v-else-if="job.status === 'finished' && job.report" class="facts">
               <div><dt>目标交易日</dt><dd>{{ job.report.target_date }}</dd></div>
               <div><dt>更新股票</dt><dd>{{ fmtInt(job.report.symbols_updated) }}</dd></div>
               <div><dt>写入行数</dt><dd>{{ fmtInt(job.report.rows_written) }}</dd></div>
@@ -184,6 +199,16 @@ onBeforeUnmount(() => window.clearTimeout(timer))
             </div>
             <div><dt>最新交易日有行情</dt><dd>{{ fmtInt(dataStatus.value.latest_day_symbols) }} 只</dd></div>
             <div><dt>有复权因子</dt><dd>{{ fmtInt(dataStatus.value.adj_factor_symbols) }} 只</dd></div>
+            <div>
+              <dt>简称 / ST 历史</dt>
+              <dd v-if="dataStatus.value.name_history && Object.keys(dataStatus.value.name_history.methods).length">
+                {{ fmtInt(dataStatus.value.name_history.st_segments) }} 段 ST 区间<span class="muted">，</span>
+                <span v-for="(n, m) in dataStatus.value.name_history.methods" :key="m" class="src">
+                  {{ NAME_METHOD_LABEL[m] ?? m }} {{ fmtInt(n) }}
+                </span>
+              </dd>
+              <dd v-else class="muted">未下载，回测按当前名称判断 ST</dd>
+            </div>
             <div><dt>占用空间</dt><dd>{{ dataStatus.value.disk_mb }} MB</dd></div>
             <div>
               <dt>来源</dt>

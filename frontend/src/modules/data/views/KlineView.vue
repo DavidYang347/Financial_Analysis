@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type Adjust, type Bar, type Stock } from '@/api'
+import { api, type Adjust, type Bar, type NameHistory, type Stock } from '@/api'
 import { errorText } from '@/api/http'
 import KlineChart from '@/components/KlineChart.vue'
 import StockPicker from '@/components/StockPicker.vue'
-import { dirClass, fmtBig, fmtNum, fmtPct } from '@/utils/format'
+import { NAME_METHOD_LABEL, dirClass, fmtBig, fmtNum, fmtPct } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,6 +18,8 @@ const bars = ref<Bar[]>([])
 const hover = ref<Bar | null>(null)
 const loading = ref(false)
 const error = ref('')
+const names = ref<NameHistory | null>(null)
+const showNames = ref(false)
 
 const RANGES = [
   { value: '1y', label: '1年', years: 1 },
@@ -48,6 +50,7 @@ async function load() {
     stock.value = s
     bars.value = d.items
     hover.value = null
+    names.value = await api.names(symbol.value).catch(() => null)
   } catch (e) {
     error.value = errorText(e)
     bars.value = []
@@ -56,6 +59,14 @@ async function load() {
   }
   router.replace({ query: { symbol: symbol.value, adjust: adjust.value, range: range.value } })
 }
+
+const stSegments = computed(() => (names.value?.items ?? []).filter((x) => x.is_st))
+const nameRows = computed(() => [...(names.value?.items ?? [])].reverse())
+const stAt = computed(() => {
+  const d = shown.value?.date
+  if (!d || !names.value?.items.length) return null
+  return stSegments.value.find((x) => x.start <= d && (!x.end || x.end >= d)) ?? null
+})
 
 const last = computed(() => bars.value[bars.value.length - 1])
 const shown = computed(() => hover.value ?? last.value)
@@ -100,6 +111,30 @@ onMounted(load)
           <el-tag v-if="stock.status === 'delisted'" type="info" size="small">已退市 {{ stock.delist_date }}</el-tag>
           <span class="muted">{{ stock.board }}</span>
           <span class="muted">{{ stock.list_date ?? '–' }} 上市</span>
+          <el-tag v-if="stAt" type="danger" size="small" effect="plain">
+            {{ hover ? '当时' : '当前' }}风险警示{{ stAt.name ? `：${stAt.name}` : '' }}
+          </el-tag>
+          <el-button v-if="names?.items.length" link type="primary" @click="showNames = !showNames">
+            简称 / ST 历史（{{ stSegments.length }} 段 ST）
+          </el-button>
+        </div>
+        <div v-if="showNames && names" class="names">
+          <p class="muted nsrc">
+            来源：{{ NAME_METHOD_LABEL[names.coverage?.method ?? ''] ?? '–' }}
+            <template v-if="names.coverage?.former_names">；曾用名 {{ names.coverage.former_names }}</template>
+          </p>
+          <el-table :data="nameRows" size="small" max-height="260">
+            <el-table-column label="起" prop="start" width="120" />
+            <el-table-column label="止" width="120">
+              <template #default="{ row }">{{ row.end ?? '至今' }}</template>
+            </el-table-column>
+            <el-table-column label="简称" min-width="140">
+              <template #default="{ row }">{{ row.name ?? (row.is_st ? 'ST 期间' : '正常') }}</template>
+            </el-table-column>
+            <el-table-column label="风险警示" width="100">
+              <template #default="{ row }"><el-tag v-if="row.is_st" type="danger" size="small">ST</el-tag></template>
+            </el-table-column>
+          </el-table>
         </div>
         <div class="price-row">
           <span class="price" :class="dirClass(shownChg?.pct)">{{ fmtNum(shown.close) }}</span>
@@ -159,6 +194,16 @@ onMounted(load)
 }
 
 /* The price is the one large element on the page. */
+.names {
+  margin: 10px 0 4px;
+  max-width: 640px;
+}
+
+.nsrc {
+  margin: 0 0 6px;
+  font-size: var(--fs-xs);
+}
+
 .price-row {
   display: flex;
   align-items: baseline;

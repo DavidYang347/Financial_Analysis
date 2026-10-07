@@ -35,6 +35,7 @@ class MarketData:
         self.lake = lake or Lake()
         self._lock = threading.Lock()
         self._con: duckdb.DuckDBPyConnection | None = None
+        self._st_history = None
 
     # DuckDB connections are not thread-safe; each call uses a cursor under a lock.
     def _connect(self) -> duckdb.DuckDBPyConnection:
@@ -69,6 +70,19 @@ class MarketData:
                 NULL::VARCHAR AS exchange, NULL::VARCHAR AS "name", NULL::VARCHAR AS board,
                 NULL::DATE AS list_date, NULL::DATE AS delist_date, NULL::VARCHAR AS status,
                 NULL::VARCHAR AS sources WHERE false""")
+        names_p, cov_p = L.meta_dir / "names.parquet", L.meta_dir / "name_coverage.parquet"
+        if names_p.exists():
+            con.execute(f"CREATE OR REPLACE VIEW names AS SELECT * FROM read_parquet('{names_p}')")
+        else:
+            con.execute("""CREATE OR REPLACE VIEW names AS SELECT NULL::VARCHAR AS symbol, NULL::DATE AS "start",
+                NULL::DATE AS "end", NULL::VARCHAR AS "name", NULL::BOOLEAN AS is_st, NULL::VARCHAR AS source WHERE false""")
+        if cov_p.exists():
+            con.execute(f"CREATE OR REPLACE VIEW name_coverage AS SELECT * FROM read_parquet('{cov_p}')")
+        else:
+            con.execute("""CREATE OR REPLACE VIEW name_coverage AS SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS method,
+                NULL::VARCHAR AS former_names, NULL::VARCHAR AS chain_hash, NULL::VARCHAR AS updated_at,
+                NULL::VARCHAR AS error WHERE false""")
+        self._st_history = None
         if L.calendar_path.exists():
             con.execute(f"CREATE OR REPLACE VIEW calendar AS SELECT * FROM read_parquet('{L.calendar_path}')")
         else:
@@ -147,6 +161,39 @@ class MarketData:
     def adj_factors(self, symbol: str) -> pd.DataFrame:
         return self.sql("SELECT date, adj_factor, source FROM adj_factor WHERE symbol = ? ORDER BY date",
                         [sym.normalize(symbol)])
+
+    # ---- names / ST ---------------------------------------------------------
+    def st_history(self):
+        """Point-in-time ST lookups (data.names.StHistory), cached until the next refresh_views()."""
+        if self._st_history is None:
+            from data.names import StHistory, read_coverage, read_segments
+            self._st_history = StHistory(read_segments(self.lake), read_coverage(self.lake), self.stocks())
+        return self._st_history
+
+    def name_history(self, symbol: str) -> pd.DataFrame:
+        """Name / ST segments of one stock: start, end, name, is_st, source."""
+        return self.sql('SELECT start, "end", name, is_st, source FROM names WHERE symbol = ? ORDER BY start',
+                        [sym.normalize(symbol)])
+
+    def st_stocks(self, day) -> pd.DataFrame:
+        """Stocks under risk warning (ST / *ST) on ``day``, with the name they traded under."""
+        h = self.st_history()
+        d = _d(day)
+        st = self.stocks().set_index("symbol")
+        # A delisted stock's last segment stays open; only count stocks listed on ``day``.
+        ld = pd.to_datetime(st["list_date"], errors="coerce")
+        dl = pd.to_datetime(st["delist_date"], errors="coerce")
+        t = pd.Timestamp(d)
+        alive = set(st.index[(ld.isna() | (ld <= t)) & (dl.isna() | (dl > t))])
+        syms = sorted(h.on(d) & alive)
+        if not syms:
+            return pd.DataFrame(columns=["symbol", "name", "name_then", "covered"])
+        then = self.sql(f"""SELECT symbol, name FROM names WHERE symbol IN ({','.join('?' * len(syms))})
+                            AND start <= ? AND ("end" IS NULL OR "end" >= ?)""", syms + [_d(day), _d(day)])
+        then = then.dropna().set_index("symbol")["name"]
+        return pd.DataFrame({"symbol": syms, "name": [st["name"].get(s, "") for s in syms],
+                             "name_then": [then.get(s) for s in syms],
+                             "covered": [h.is_covered(s) for s in syms]})
 
     def calendar(self, start=None, end=None) -> list[date]:
         df = self.sql("SELECT date FROM calendar WHERE (? IS NULL OR date >= ?) AND (? IS NULL OR date <= ?) ORDER BY date",

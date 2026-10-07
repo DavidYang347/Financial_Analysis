@@ -52,6 +52,16 @@ export const RUN_MODE_LABEL: Record<string, string> = {
   full: '全量下载',
   incremental: '增量更新',
   repair: '修复',
+  names: '简称 / ST 历史',
+}
+
+export const NAME_METHOD_LABEL: Record<string, string> = {
+  szse: '深交所简称变更',
+  tushare: 'Tushare',
+  baostock: 'BaoStock 日线 ST 标记',
+  never_st: '从未 ST（东方财富曾用名）',
+  undated: '曾经 ST，尚无日期（按当前名称）',
+  missing: '无记录（按当前名称）',
 }
 
 export const SOURCE_LABEL: Record<string, string> = {

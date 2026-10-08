@@ -14,7 +14,7 @@ from oddsbook import odds as od
 from oddsbook.config import PARAMS
 from screening.params import resolve_params
 
-P = resolve_params(PARAMS, {})
+P = resolve_params(PARAMS, {"odds_min": 3.0})  # document default R = 3 for the worked example
 
 
 def _row(**kw):

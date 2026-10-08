@@ -43,6 +43,7 @@ POSITIVE = {"ma_approved", "ma_draft", "ma_progress", "st_removed", "audit_clear
             "placement_major", "bankruptcy", "debt_restructure"}
 BAD_FORECAST = {"首亏", "增亏", "续亏", "预减"}
 GOOD_FORECAST = {"扭亏", "减亏", "预增", "略增", "续盈"}
+_PB_CACHE: dict = {}
 
 
 @dataclass
@@ -99,7 +100,11 @@ class Book:
     def ensure_prices(self, today, lookback_days: int = 400) -> None:
         if self.pb is None:
             start = pd.Timestamp(today) - pd.Timedelta(days=lookback_days)
-            self.pb = feat.PriceBook.load(self.md, start, self.md.latest_date())
+            key = (start.normalize(), self.md.latest_date())
+            if _PB_CACHE.get("key") != key:  # reused across runs in one process (experiments)
+                _PB_CACHE.clear()
+                _PB_CACHE.update(key=key, pb=feat.PriceBook.load(self.md, start, self.md.latest_date()))
+            self.pb = _PB_CACHE["pb"]
             ev = self.fs.table("events")
             self._events = ev.sort_values("ann_date").reset_index(drop=True)
 
@@ -231,12 +236,16 @@ class Book:
         ev = self.events_upto(t)
         ev = ev[ev["ann_date"] >= t - pd.DateOffset(years=3)]
         veto = vt.veto(snap, ev, t, p)
-        if p.get("f_enabled", True) and (self.turns.empty or self.is_month_end(t) or t.month in (5, 9, 11)):
+        if (p.get("f_enabled", True) or p.get("distress_industry", "off") != "off") and \
+                (self.turns.empty or self.is_month_end(t) or t.month in (5, 9, 11)):
             self.turns = feat.industry_turns(self.fs, t)
         w0 = self.trading_days_back(t, p["radar_event_days"])
         sig = chn.scan(snap, self.fs, ev, t, w0, self.turns, p)
         allowed = self._universe_mask(snap)
         sig = sig[sig["symbol"].isin(allowed[allowed].index)].copy()
+        off = {x.strip() for x in str(p.get("signals_off", "")).split(",") if x.strip()}
+        if off:
+            sig = sig[~sig["code"].isin(off)]
         # State signals keep the date they were first seen (continuous presence; gaps > 5 weeks reset).
         if len(sig):
             dates = []
@@ -314,7 +323,20 @@ class Book:
         todo = [s for s in self.watch if s in snap.index and
                 (s not in self.research_log or (t - self.research_log[s]).days >= 7 * p["research_retry_weeks"]
                  or self.watch[s].get("last_change", t) > self.research_log[s])]
-        todo.sort(key=lambda s: -(self.watch[s].get("quick_odds") or 0))
+        rank = p.get("research_rank", "quick_odds")
+
+        def prio(s):
+            w = self.watch[s]
+            q = w.get("quick_odds") or 0
+            if not np.isfinite(q):
+                q = 0
+            if rank == "evidence":
+                return -(10 * (w.get("n_ab") or 0) + min(q, 10))
+            if rank == "small":
+                m = snap.at[s, "mcap"] if s in snap.index else np.nan
+                return m if np.isfinite(m) else 1e15
+            return -q
+        todo.sort(key=prio)
         for sym in todo[: p["research_per_week"]]:
             card = self._research(t, sym, snap.loc[sym], pd.Series(self.watch[sym]), close_h, veto.loc[sym])
             self.research_log[sym] = t
@@ -408,6 +430,19 @@ class Book:
             why.append(f"敏感性只过 {card['sens_passes']} 问")
         if card["checklist_fails"] > p["max_checklist_fail"]:
             why.append(f"检查清单 {card['checklist_fails']} 项否")
+        if p.get("distress_improving") and card["theme"] == "distress":
+            a, b = card.get("np_ttm"), card.get("np_ttm_ly")
+            if not (np.isfinite(a) and np.isfinite(b) and a > b):
+                why.append("TTM 利润没有同比改善，减亏 / 扭亏还没在财报上兑现")
+        mode = p.get("distress_industry", "off")
+        if mode != "off" and card["theme"] == "distress" and len(self.turns):
+            ind = card.get("industry")
+            rolling = set(self.turns.loc[self.turns["rolling_over"], "industry"])
+            turning = set(self.turns.loc[self.turns["turning"], "industry"])
+            if mode == "not_rolling" and ind in rolling:
+                why.append(f"行业（{ind}）毛利率连续两季回落，困境未出清")
+            elif mode == "turning" and ind not in turning:
+                why.append(f"行业（{ind}）没有出现拐点")
         return (not why), "；".join(why)
 
     def _cap(self, pool: dict, cap: int, key: str, t, label: str) -> None:

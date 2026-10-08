@@ -379,3 +379,41 @@ export interface ExtraTable {
   columns: string[]
   items: Record<string, unknown>[]
 }
+
+// ---- market reviews (行情复盘) ---------------------------------------------------
+export type ReviewKind = 'monthly' | 'weekly'
+
+export interface ReviewListItem {
+  label: string
+  has_stats: boolean
+  has_report: boolean
+  start: string | null
+  end: string | null
+  summary: { median_ret: number; up_share: number; doubled_l2h: number; doubled_cc: number; avg_amount: number; top: string[] } | null
+}
+
+export interface ReviewDetail {
+  kind: ReviewKind
+  label: string
+  report: string | null
+  has_stats: boolean
+  start?: string
+  end?: string
+  trading_days?: number
+  summary?: ReviewListItem['summary']
+  indices?: Record<string, unknown>[]
+  breadth?: Record<string, number>
+  volume?: Record<string, unknown>
+  [k: string]: unknown
+}
+
+export const reviewApi = {
+  list: () => get<Record<ReviewKind, ReviewListItem[]>>('/api/v1/reviews'),
+  detail: (kind: ReviewKind, label: string) =>
+    get<ReviewDetail>(`/api/v1/reviews/${kind}/${encodeURIComponent(label)}`),
+  table: (kind: ReviewKind, label: string, name: string, limit = 500) =>
+    get<{ name: string; total: number; items: Record<string, unknown>[] }>(
+      `/api/v1/reviews/${kind}/${encodeURIComponent(label)}/table/${name}`, { limit }),
+  compute: (kind: ReviewKind, period: string) =>
+    post<{ kind: ReviewKind; label: string; summary: ReviewListItem['summary'] }>('/api/v1/reviews/compute', { kind, period }),
+}

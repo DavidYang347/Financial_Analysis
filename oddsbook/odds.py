@@ -142,8 +142,15 @@ def build_card(sym: str, row: pd.Series, sig: pd.Series, close_h: pd.DataFrame, 
         method = "正常化 EPS × 中枢 PE" if math.isfinite(eps_n) else "BVPS × 历史中枢 PB"
         T = eps_n * pe_mid if math.isfinite(eps_n) else (bvps * pb_med if bvps > 0 and pb_med > 0 else math.nan)
 
+    # §5 通道 E: a buyback cap far above the price is management's own view of value.
+    cap_h = _f(row.get("buyback_cap_h"))
+    if p.get("buyback_target", False) and "e_buyback" in str(sig.get("codes", "")) and cap_h > P:
+        if not math.isfinite(T) or cap_h > T:
+            T = cap_h
+            method = "回购上限价（管理层给出的价值下限）"
+
     # Sanity caps on the base value: book value x mid PB (non-event, non-SOTP), and a max upside.
-    if math.isfinite(T) and not is_event and theme != "revalue" and bvps > 0:
+    if math.isfinite(T) and not is_event and theme != "revalue" and bvps > 0 and not method.startswith("回购"):
         pb_mid = np.nanmax([pb_med, _f(row.get("ind_pb"))])
         if math.isfinite(pb_mid) and pb_mid > 0 and T > bvps * pb_mid * p["pb_cap_mult"]:
             T = bvps * pb_mid * p["pb_cap_mult"]
@@ -161,7 +168,12 @@ def build_card(sym: str, row: pd.Series, sig: pd.Series, close_h: pd.DataFrame, 
     if is_event and math.isfinite(pre):
         anchors["事件前价格"] = pre
     if eps_ttm > 0 and theme not in ("revalue",):
-        anchors["盈利下修估值"] = eps_ttm * 0.8 * p["pe_mid_lo"]
+        # §8 step 4: earnings cut by 20% x the stock's own low PE (10th percentile of its history,
+        # at least ``pe_mid_lo``); with too little history fall back to pe_mid_lo.
+        pe_low = p["pe_mid_lo"]
+        if p.get("anchor_pe", "own") == "own" and _f(row.get("pe_months")) >= 24 and _f(row.get("pe_p10")) > 0:
+            pe_low = max(pe_low, _f(row.get("pe_p10")))
+        anchors["盈利下修估值"] = eps_ttm * 0.8 * pe_low
     if theme == "revalue" and math.isfinite(netcash_ps) and netcash_ps > 0:
         anchors["净现金"] = netcash_ps
     anchors = {k: v for k, v in anchors.items() if math.isfinite(v) and v > 0}
@@ -259,6 +271,7 @@ def build_card(sym: str, row: pd.Series, sig: pd.Series, close_h: pd.DataFrame, 
     card["qualified_now"] = bool(
         math.isfinite(odds) and odds >= R and E >= p["exp_min"] and downside <= p["max_downside"])
     card["np_ttm"] = _f(row.get("np_ttm"))
+    card["np_ttm_ly"] = _f(row.get("np_ttm_ly"))
     card["net_cash"] = _f(row.get("net_cash"))
     card["industry"] = row.get("industry")
     card["amount20"] = _f(row.get("amount20"))

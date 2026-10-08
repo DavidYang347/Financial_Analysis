@@ -71,9 +71,18 @@ def _row(sym, code, date, detail="", anchor_date=None) -> dict:
             "detail": f"{label}：{detail}" if detail else label}
 
 
-def deal_anchor(events: pd.DataFrame, sym: str, kinds: tuple[str, ...], end) -> pd.Timestamp | None:
-    """First announcement of the current deal: earliest ``kinds`` event after the last termination / completion."""
-    e = events[(events["symbol"] == sym) & (events["ann_date"] <= end)]
+def deal_anchor(events, sym: str, kinds: tuple[str, ...], end) -> pd.Timestamp | None:
+    """First announcement of the current deal: earliest ``kinds`` event after the last termination / completion.
+
+    ``events`` is either the event frame or a dict symbol -> that symbol's events (faster in loops).
+    """
+    if isinstance(events, dict):
+        e = events.get(sym)
+        if e is None:
+            return None
+        e = e[e["ann_date"] <= end]
+    else:
+        e = events[(events["symbol"] == sym) & (events["ann_date"] <= end)]
     stop = e[e["event"].isin(["ma_terminated", "control_terminated", "ma_closed"])]["ann_date"].max()
     e = e[e["event"].isin(kinds)]
     if pd.notna(stop):
@@ -89,6 +98,10 @@ def scan(snap: pd.DataFrame, fs, events: pd.DataFrame, today, window_start, turn
     rows: list[dict] = []
     alive = set(snap.index)
     win = events[(events["ann_date"] >= w0) & (events["ann_date"] <= t) & events["symbol"].isin(alive)]
+    deal_kinds = {"control_change", "stake_transfer", "ma_plan", "ma_draft", "ma_progress", "bankruptcy",
+                  "ma_terminated", "control_terminated", "ma_closed"}
+    hot = events[events["symbol"].isin(set(win["symbol"])) & events["event"].isin(deal_kinds)]
+    by_sym = {k: v for k, v in hot.groupby("symbol", sort=False)}
 
     # ---- A1: announced deals ------------------------------------------------
     for ev_code, sig in (("control_change", "a1_control"), ("stake_transfer", "a1_control"),
@@ -96,7 +109,7 @@ def scan(snap: pd.DataFrame, fs, events: pd.DataFrame, today, window_start, turn
                          ("ma_progress", "a1_ma_node"), ("ma_approved", "a1_ma_node")):
         for r in win[win["event"] == ev_code].drop_duplicates("symbol", keep="last").itertuples():
             kinds = ("control_change", "stake_transfer") if sig == "a1_control" else ("ma_plan", "ma_draft", "ma_progress")
-            anchor = deal_anchor(events, r.symbol, kinds, t) or r.ann_date
+            anchor = deal_anchor(by_sym, r.symbol, kinds, t) or r.ann_date
             rows.append(_row(r.symbol, sig, r.ann_date, r.title[:60], anchor))
 
     # ---- A2: precursors -----------------------------------------------------
@@ -130,7 +143,7 @@ def scan(snap: pd.DataFrame, fs, events: pd.DataFrame, today, window_start, turn
         rows.append(_row(sym, "b_deleverage", t, "债务重组 / 豁免 / 展期" if sym in dr else "总负债连续三期下降"))
     bk = win[(win["event"] == "bankruptcy")]
     for r in bk.drop_duplicates("symbol", keep="last").itertuples():
-        anchor = deal_anchor(events, r.symbol, ("bankruptcy",), t) or r.ann_date
+        anchor = deal_anchor(by_sym, r.symbol, ("bankruptcy",), t) or r.ann_date
         rows.append(_row(r.symbol, "b_bankruptcy", r.ann_date, r.title[:60], anchor))
     imp = set(events.loc[(events["event"] == "impairment") & (events["ann_date"] >= t - pd.Timedelta(days=120)), "symbol"])
     bath = snap[snap.index.isin(imp) & (snap["fy_np"] < 0) & (snap["ocf_ttm"] > 0)
@@ -148,8 +161,9 @@ def scan(snap: pd.DataFrame, fs, events: pd.DataFrame, today, window_start, turn
     term = win[win["event"].isin(["ma_terminated", "control_terminated"])]
     for r in term.drop_duplicates("symbol").itertuples():
         kinds = ("ma_plan", "ma_draft", "control_change", "stake_transfer")
-        e = events[(events["symbol"] == r.symbol) & events["event"].isin(kinds) & (events["ann_date"] < r.ann_date)
-                   & (events["ann_date"] >= r.ann_date - pd.DateOffset(months=30))]
+        e = by_sym.get(r.symbol, events.iloc[:0])
+        e = e[e["event"].isin(kinds) & (e["ann_date"] < r.ann_date)
+              & (e["ann_date"] >= r.ann_date - pd.DateOffset(months=30))]
         if len(e):
             rows.append(_row(r.symbol, "c_ma_failed", r.ann_date, r.title[:60], e["ann_date"].min()))
     over = snap[snap.index.isin(imp) & (snap["ret20"] <= -p["c_report_drop"]) & (snap["ocf_ttm"] > 0)]
@@ -218,19 +232,25 @@ def scan(snap: pd.DataFrame, fs, events: pd.DataFrame, today, window_start, turn
 
 def summarize(sig: pd.DataFrame) -> pd.DataFrame:
     """Per symbol: channels, best theme, number of independent A/B signals, whether there is a real change."""
+    cols = ["channels", "codes", "theme", "n_ab", "has_change", "anchor_date", "last_signal", "last_change", "detail"]
     if sig.empty:
-        return pd.DataFrame(columns=["channels", "codes", "theme", "n_ab", "has_change", "anchor_date", "last_signal",
-                                     "last_change", "detail"])
+        return pd.DataFrame(columns=cols)
     rank = {t: i for i, t in enumerate(THEME_PRIORITY)}
-    out = []
-    for sym, g in sig.groupby("symbol"):
-        th = min(g["theme"], key=lambda x: rank.get(x, 99))
-        ab = g[g["grade"].isin(["A", "B"])]
-        ch = g[g["change"]]
-        anchor = g.loc[g["theme"] == th, "anchor_date"].dropna()
-        out.append({"symbol": sym, "channels": "".join(sorted(set(g["channel"]))), "codes": ",".join(g["code"]),
-                    "theme": th, "n_ab": int(ab["code"].nunique()), "has_change": bool(len(ch)),
-                    "anchor_date": anchor.min() if len(anchor) else pd.NaT, "last_signal": g["date"].max(),
-                    "last_change": ch["date"].max() if len(ch) else pd.NaT,
-                    "detail": "；".join(g["detail"].tolist())})
-    return pd.DataFrame(out).set_index("symbol")
+    g = sig.assign(_r=sig["theme"].map(rank).fillna(99)).sort_values(["symbol", "_r", "date"])
+    gb = g.groupby("symbol", sort=True)
+    best = gb["theme"].first()
+    out = pd.DataFrame(index=best.index)
+    out["channels"] = gb["channel"].agg(lambda x: "".join(sorted(set(x))))
+    out["codes"] = gb["code"].agg(",".join)
+    out["theme"] = best
+    ab = g[g["grade"].isin(["A", "B"])]
+    out["n_ab"] = ab.groupby("symbol")["code"].nunique().reindex(out.index).fillna(0).astype(int)
+    ch = g[g["change"].astype(bool)]
+    out["has_change"] = out.index.isin(ch["symbol"])
+    th = g[g["theme"] == g["symbol"].map(best)]
+    out["anchor_date"] = th.groupby("symbol")["anchor_date"].min().reindex(out.index)
+    out["last_signal"] = gb["date"].max()
+    out["last_change"] = ch.groupby("symbol")["date"].max().reindex(out.index)
+    out["detail"] = gb["detail"].agg("；".join)
+    out.index.name = "symbol"
+    return out[cols]

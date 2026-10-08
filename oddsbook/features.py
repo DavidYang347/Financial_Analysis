@@ -123,10 +123,13 @@ def snapshot(today, stocks: pd.DataFrame, st_set: set, fs: FundStore, pb: PriceB
     s["np_q_prev"] = g2["np_q"].first().reindex(s.index)
     # Total liabilities falling over the last three reports.
     q3 = g_all.tail(3)
-    first3 = q3.groupby("symbol")["total_liab"].first()
-    last3 = q3.groupby("symbol")["total_liab"].last()
-    mono = q3.groupby("symbol")["total_liab"].apply(lambda x: len(x) == 3 and x.is_monotonic_decreasing)
-    s["liab_falling"] = (mono & (last3 < first3 * 0.95)).reindex(s.index).fillna(False).astype(bool)
+    g3 = q3.groupby("symbol")["total_liab"]
+    n3 = g3.size()
+    l0 = q3.groupby("symbol")["total_liab"].first()
+    l2 = q3.groupby("symbol")["total_liab"].last()
+    mid = q3.assign(_k=q3.groupby("symbol").cumcount()).query("_k == 1").set_index("symbol")["total_liab"]
+    mono = (n3 == 3) & (l0 >= mid.reindex(l0.index)) & (mid.reindex(l0.index) >= l2)
+    s["liab_falling"] = (mono & (l2 < l0 * 0.95)).reindex(s.index).fillna(False).astype(bool)
     # Same period a year earlier (TTM profit trend).
     idx = fin_all.set_index(["symbol", "period"])["np_ttm"]
     key = pd.MultiIndex.from_arrays([s.index, s["fin_period"] - pd.DateOffset(years=1)])
@@ -141,16 +144,11 @@ def snapshot(today, stocks: pd.DataFrame, st_set: set, fs: FundStore, pb: PriceB
     fy_last = fy5.groupby("symbol").tail(1).set_index("symbol")
     s["fy_min_profit"] = fy_last[["total_profit", "np", "np_ded"]].min(axis=1, skipna=True).reindex(s.index)
 
-    def loss_streak(x: pd.Series) -> int:
-        n = 0
-        for v in reversed(x.tolist()):
-            if pd.notna(v) and v < 0:
-                n += 1
-            else:
-                break
-        return n
-
-    s["loss_years"] = gf["np"].apply(loss_streak).reindex(s.index).fillna(0).astype(int)
+    # Consecutive loss years counted back from the latest annual report (vectorised).
+    rev = fy5.iloc[::-1]
+    notloss = ~(rev["np"] < 0)
+    broken = notloss.groupby(rev["symbol"], sort=False).cummax()
+    s["loss_years"] = (~broken).groupby(rev["symbol"], sort=False).sum().reindex(s.index).fillna(0).astype(int)
     pos = fy5[fy5["np"] > 0]
     s["norm_np_hist"] = pos.groupby("symbol")["np"].mean().reindex(s.index)
     s["pos_years"] = pos.groupby("symbol").size().reindex(s.index).fillna(0).astype(int)
@@ -179,6 +177,10 @@ def snapshot(today, stocks: pd.DataFrame, st_set: set, fs: FundStore, pb: PriceB
     s["pb_min"] = gp.min().reindex(s.index)
     s["pb_med"] = gp.median().reindex(s.index)
     s["pb_months"] = gp.size().reindex(s.index).fillna(0)
+    peh = val[(val["pe_ttm"] > 0) & (val["pe_ttm"] < 200)]
+    gpe = peh.groupby("symbol")["pe_ttm"]
+    s["pe_p10"] = gpe.quantile(0.10).reindex(s.index)
+    s["pe_months"] = gpe.size().reindex(s.index).fillna(0)
     now = pbh["symbol"].map(s["pb"])
     s["pb_pct"] = (pbh["pb"] < now).groupby(pbh["symbol"]).mean().reindex(s.index)
 
@@ -195,6 +197,15 @@ def snapshot(today, stocks: pd.DataFrame, st_set: set, fs: FundStore, pb: PriceB
         ind_pb = lm[(lm["pb"] > 0) & (lm["pb"] < 30)].groupby("industry")["pb"].median()
         s["ind_pe"] = s["industry"].map(ind_pe)
         s["ind_pb"] = s["industry"].map(ind_pb)
+
+    # ---- latest buyback plan in the last 12 months: price cap on today's hfq basis ----
+    rp = fs.table("repurchase")
+    s["buyback_cap_h"] = np.nan
+    if not rp.empty:
+        rp = rp[(rp["ann_date"] <= t) & (rp["ann_date"] >= t - pd.Timedelta(days=365)) & (rp["price_cap"] > 0)]
+        cap = rp.sort_values("ann_date").groupby("symbol")["price_cap"].last()
+        # Cap is a raw price at announcement; dividends since then are small, so raw x today's factor.
+        s["buyback_cap_h"] = cap.reindex(s.index) * s["F"]
 
     # ---- pledge (company level, weekly) ----
     pl = fs.table("pledge")

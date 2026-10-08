@@ -114,9 +114,38 @@ make fundlab        # = python -m fundlab fetch && python -m fundlab build；首
 
 时点规则：只用 `ann_date <= 当天` 的财报和公告（收盘后复盘、次日开盘成交）；财报发布日优先取预约披露表的实际披露日。所有价格（目标价、证伪价、买入线）按后复权保存，跨除权除息可比。
 
+调参工具（命令行，结果不进回测记录）：
+
+```bash
+python -m oddsbook.experiment --name 试验名 --set odds_min=3 max_total_risk=0.08   # 跑一组参数，记 2025 / 2026 分段指标
+python -m oddsbook.experiment --list                                              # 已跑过的全部试验，按夏普排序
+python -m oddsbook.study build && python -m oddsbook.study label                  # 每周给所有有信号的股票写赔率卡，标上之后的收益，看哪些特征有用
+```
+
 引擎新增了可选的 `finalize(ctx, params)` 钩子：策略返回 `{名字: DataFrame}`，保存为回测目录下的 `x_<名字>.parquet`，接口 `/api/v1/backtests/{run_id}/extras`。
 
 已知简化：没有一致预期和备考利润（事件成功价 = 事件前价格 × 倍数）；有息负债用总负债扣应付和预收近似；质押是公司层面比例；财报是最新口径；公告只按标题分类。
+
+## 行情复盘（月度 / 周度）
+
+按 `materials/复盘方法/A股月度复盘SOP.md`、`A股周度复盘SOP.md` 做复盘，分两部分：脚本算数据，报告正文按 SOP 撰写。
+
+```
+review/fetch.py     外部数据：中证 / 腾讯指数、申万一级行业（指数 + 成分）、新浪概念板块、东财涨跌停池、两融、宏观、中债、股东户数
+review/stats.py     统计：区间涨幅榜（剔除 ST / 次新）、月内翻倍股（低点→高点 ≥100%，新股、退市整理股单列）、宽度、量能、风格、
+                    每日情绪（涨跌停按当日涨跌幅限制计算）、行业与概念、牛股基因、年内翻倍名单、公告汇总、重组反应、供需
+review/render.py    报告草稿 review/reports_src/<kind>/<label>.md 里的 {{t:表名}} / {{v:路径}} 占位符替换成统计表
+materials/复盘报告/  渲染后的报告（月度复盘/2026-06.md …），前端“行情复盘”页显示
+```
+
+```bash
+python -m review fetch                      # 下载 / 刷新外部数据（可断点续传）
+python -m review monthly 2026-10            # 计算 10 月统计 → data/lake/reviews/monthly/2026-10.json
+python -m review weekly 2026-10-09          # 计算该日所在一周
+python -m review render monthly 2026-10     # 写好 review/reports_src/monthly/2026-10.md 后渲染成报告
+```
+
+页面上也可以直接输入区间“生成统计”，没有正文的期次只显示统计表。逐股催化（联网核实）存在 `data/lake/reviews/research/<月份>.json`，有则自动并入涨幅榜和翻倍股表。
 
 ## 添加页面模块
 
